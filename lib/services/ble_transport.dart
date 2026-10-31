@@ -235,6 +235,17 @@ class BleTransport {
     } catch (_) {
       // Already stopped.
     }
+    if (Platform.isWindows) {
+      // Windows advertises through the GATT service provider itself, so the
+      // service has to be removed to stop advertising. The Dart-side service
+      // map belongs to this PeripheralManager instance, so do it before the
+      // plugin objects are dropped below.
+      try {
+        await _peripheral?.removeAllServices();
+      } catch (_) {
+        // Nothing registered or the radio is already off.
+      }
+    }
 
     _closeAll('radio stopped', notify: false);
     _scanning = false;
@@ -483,10 +494,23 @@ class BleTransport {
         _servicesReady = true;
       }
 
+      // Registering a GATT service with the Windows backend already starts a
+      // connectable, discoverable advertisement through GattServiceProvider.
+      // Starting a second BluetoothLEAdvertisementPublisher for the same
+      // service fails with "The parameter is incorrect", so treat the service
+      // advertisement as the active advertisement on Windows.
+      if (Platform.isWindows) {
+        _advertising = true;
+        _advertiseFailures = 0;
+        _emit(BleAdvertisingEvent(active: true));
+        _log('Advertising MGS service');
+        return;
+      }
+
       // A 128-bit service UUID plus a short name fits inside the legacy
       // 31-byte advertisement on every platform we target.
       final advertisement = Advertisement(
-        name: Platform.isWindows ? null : 'MGS',
+        name: 'MGS',
         serviceUUIDs: [mgsServiceUuid],
       );
       await peripheral.startAdvertising(advertisement);

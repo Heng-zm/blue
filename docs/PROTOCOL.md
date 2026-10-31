@@ -328,12 +328,12 @@ Limits:
 
 | Item | Limit |
 | --- | --- |
-| File size | 5 MiB (5,242,880 bytes) |
+| File size | 256 MiB (bounded by 16-bit chunk count) |
 | File name | 120 UTF-8 bytes |
 | MIME type | 80 UTF-8 bytes |
-| Voice note | 60 seconds; minimum 500 ms |
-| Ciphertext | 5,242,908 bytes (plaintext + 28-byte AES-GCM overhead) |
-| Chunks | 1,281 |
+| Voice note | 300 seconds; minimum 500 ms |
+| Ciphertext | Plaintext + 28-byte AES-GCM overhead |
+| Chunks | Up to 65,535 (uint16 chunk count) |
 | Blob chunk data | 4,096 bytes |
 
 With encryption enabled, the descriptor is inside the encrypted message body,
@@ -393,9 +393,8 @@ the key.
    blob by blob ID and file name, so a duplicate descriptor does not download
    the file again.
 
-A transfer cannot resume mid-file: a retry resends every chunk. With the 5 MiB
-cap this is intentional; the protocol keeps the state machine small and the
-descriptor authenticated.
+A transfer cannot resume mid-file: a retry resends every chunk. This keeps
+the state machine small and the descriptor authenticated.
 
 ## 10. Routing
 

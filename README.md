@@ -15,7 +15,7 @@ Version 2 adds **file transfer, voice notes, passphrase encryption, and a compac
 
 - **Public Nearby channel** — broadcast to every MGS device within mesh range.
 - **Direct conversations** — tap a device on the radar to open a 1:1 thread.
-- **Files up to 5 MB** — pick any file and send it over the mesh in encrypted chunks.
+- **File transfer** — pick any file and send it over the mesh in encrypted chunks.
 - **Voice notes up to 60 seconds** — record, send, and play back without a network.
 - **Mesh encryption** — set one shared passphrase to encrypt message bodies, file metadata, and file/voice bytes with AES-256-GCM. Relays forward ciphertext without being able to read it.
 - **Binary protocol v2** — fixed-size binary frames and envelopes replace JSON on air for lower overhead and faster parsing.

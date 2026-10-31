@@ -318,12 +318,11 @@ class SettingsScreen extends StatelessWidget {
                       _InfoRow(label: 'Internet', value: 'Not used'),
                       const Divider(height: 26),
                       const Text(
-                        'With a mesh passphrase set, messages, files (up to '
-                        '5 MB), and voice notes (up to 60 seconds) are '
-                        'encrypted end to end. Nearby is still public: anyone '
-                        'with the same passphrase can read it. iOS and Android '
-                        'may pause Bluetooth in the background; keep MGS open '
-                        'for reliable meshing.',
+                        'With a mesh passphrase set, messages, files, and '
+                        'voice notes are encrypted end to end. Nearby is still '
+                        'public: anyone with the same passphrase can read it. '
+                        'iOS and Android may pause Bluetooth in the background; '
+                        'keep MGS open for reliable meshing.',
                         style: TextStyle(
                           color: MgsColors.muted,
                           fontSize: 11.5,

@@ -4,6 +4,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+import '../core/constants.dart';
+
 class RecordedVoice {
   const RecordedVoice({
     required this.path,
@@ -103,7 +105,7 @@ class VoiceRecorder {
       return null;
     }
 
-    final durationMs = elapsed.inMilliseconds.clamp(1, 60 * 1000);
+    final durationMs = elapsed.inMilliseconds.clamp(1, maxVoiceSeconds * 1000);
     return RecordedVoice(
       path: path,
       name: p.basename(path),

@@ -29,21 +29,18 @@ const int maxDisplayNameLength = 32;
 const String broadcastRecipient = '*';
 
 /// Attachments.
-const int maxFileBytes = 5 * 1024 * 1024;
-const int maxVoiceSeconds = 60;
+/// The maximum file size is bounded by the 16-bit blob chunk index in the
+/// wire protocol: 65,535 chunks * 4,096 bytes per chunk ≈ 256 MiB.
+const int maxBlobChunks = 65535;
+const int blobChunkPayloadBytes = 4096;
+const int maxBlobCipherBytes = maxBlobChunks * blobChunkPayloadBytes;
+const int maxFileBytes = maxBlobCipherBytes - 28;
+const int maxVoiceSeconds = 300;
 const int maxFileNameLength = 120;
 const int maxMimeTypeLength = 80;
 const int maxPassphraseLength = 128;
 const int minPassphraseLength = 8;
-
-/// Blob transfer. A logical chunk must stay below the 24 KiB frame ceiling
-/// even when the link only manages 20-byte BLE writes: 4096 + 32 header
-/// bytes becomes 413 frames at the worst-case chunk size.
-const int blobChunkPayloadBytes = 4096;
-const int maxBlobChunks =
-    (maxFileBytes + 28 + blobChunkPayloadBytes - 1) ~/ blobChunkPayloadBytes;
-const int maxBlobCipherBytes = maxFileBytes + 28;
-const int maxIncomingBlobs = 8;
+const int maxIncomingBlobs = 32;
 const int blobSendHighWaterBytes = 64 * 1024;
 
 /// GATT identifiers. The leading bytes spell "mgs-mesh-v1" in ASCII; the last

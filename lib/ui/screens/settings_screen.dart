@@ -238,7 +238,7 @@ class SettingsScreen extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
                   child: Column(
                     children: [
-                      _InfoRow(label: 'Version', value: '0.1.0'),
+                      _InfoRow(label: 'Version', value: '0.1.1'),
                       const SizedBox(height: 9),
                       _InfoRow(label: 'Protocol', value: 'MGS/1'),
                       const SizedBox(height: 9),

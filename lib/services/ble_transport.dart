@@ -172,9 +172,16 @@ class BleTransport {
     _subscriptions.add(central.characteristicNotified.listen(_onNotified));
 
     _subscriptions.add(peripheral.stateChanged.listen(_onPeripheralState));
-    _subscriptions.add(
-      peripheral.connectionStateChanged.listen(_onInboundState),
-    );
+    // The Windows backend does not implement peripheral connection events and
+    // throws when the stream is accessed. Subscribing unconditionally aborts
+    // the whole radio start before advertising or scanning can begin. Inbound
+    // disconnects are still detected through write/notify failures and the
+    // heartbeat timeout on Windows.
+    if (!Platform.isWindows) {
+      _subscriptions.add(
+        peripheral.connectionStateChanged.listen(_onInboundState),
+      );
+    }
     _subscriptions.add(
       peripheral.characteristicWriteRequested.listen(
         (event) => unawaited(_onWriteRequested(event)),

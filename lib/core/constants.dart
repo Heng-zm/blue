@@ -3,7 +3,7 @@ import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
 /// Human-facing app name.
 const String appName = 'MGS';
 const String appTagline = 'Offline mesh messenger';
-const String appVersion = '0.2.0';
+const String appVersion = '0.2.1';
 
 /// Wire protocol version. Bump when the frame or envelope layout changes.
 ///

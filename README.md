@@ -105,7 +105,7 @@ lib/
   state/      AppController: persistence, outbox, unread, UI state
   ui/         theme, onboarding, chats, radar, chat, settings, widgets
 test/         frame, router, message, and app smoke tests
-docs/         protocol specification
+docs/         protocol specification, release notes
 android/      Android host project
 ios/          iOS host project
 windows/      Windows host project
@@ -120,6 +120,18 @@ flutter test      # 23 tests
 
 The protocol layer is pure Dart and covered by unit tests: frame encoding, chunking, reassembly, duplicate chunks, stale assemblies, TTL, ACK decisions, dedupe, envelope validation, and storage round-trips.
 
+## Releasing
+
+Releases are built and published by GitHub Actions:
+
+1. Bump `version` in `pubspec.yaml` (for example `0.1.2+3`).
+2. Add `docs/release-notes/v0.1.2.md` with the release notes. This file is optional; without it, GitHub generates the notes.
+3. Push to `main`.
+
+The `CI` workflow builds Android, Windows, and unsigned iOS artifacts. When every job succeeds, the `release` job checks for the `v<version>` tag. If no release exists yet, it stages the four platform assets, writes `SHA256SUMS.txt`, and publishes the GitHub release automatically. Pushes that do not change the version are skipped, so the same version is never published twice.
+
+Existing releases can also be published manually by running the workflow from the Actions tab.
+
 ## Known limitations (v1)
 
 - **No end-to-end encryption.** Relays can read messages. Treat Nearby as public. Do not use MGS for secrets yet.
@@ -129,7 +141,7 @@ The protocol layer is pure Dart and covered by unit tests: frame encoding, chunk
 - **No attachments.** Text only, 2,000 characters.
 - **No multi-hop ACK or routing table.** Flooding is simple and robust, not bandwidth-optimal.
 - **Windows advertisements cannot carry a local name**; identity is always learned via `HELLO`.
-- **Windows peripheral support depends on the adapter.** If advertising fails, the radio log reports it; scanning and direct connections may still work.
+- **Windows peripheral support depends on the adapter.** MGS advertises through its GATT service registration, which needs an adapter with peripheral-role support. Without it, scanning and direct connections may still work.
 - **No signing or packaging setup yet.** The default Flutter launcher icons are still in place, and release signing must be configured per platform.
 
 ## Privacy

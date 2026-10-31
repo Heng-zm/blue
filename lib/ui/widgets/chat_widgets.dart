@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
@@ -370,62 +371,70 @@ class _FileBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final available = attachment.available;
+    if (attachment.isImage && available && attachment.path != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: () => _open(context),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 240,
+                  maxHeight: 260,
+                  minWidth: 120,
+                  minHeight: 80,
+                ),
+                child: Image.file(
+                  File(attachment.path!),
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) =>
+                      _buildFileRow(context, available),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 5),
+          GestureDetector(
+            onTap: () => _open(context),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    attachment.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  formatBytes(attachment.size),
+                  style: TextStyle(color: subtle, fontSize: 10.5),
+                ),
+              ],
+            ),
+          ),
+          _TransferState(
+            message: message,
+            subtle: subtle,
+            foreground: foreground,
+          ),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         GestureDetector(
           onTap: available ? () => _open(context) : null,
-          child: SizedBox(
-            width: 226,
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: subtle.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    _fileIcon(attachment.name),
-                    size: 21,
-                    color: foreground,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        attachment.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: foreground,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          height: 1.25,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        available
-                            ? '${formatBytes(attachment.size)} · tap to open'
-                            : formatBytes(attachment.size),
-                        style: TextStyle(color: subtle, fontSize: 10.5),
-                      ),
-                    ],
-                  ),
-                ),
-                if (available) ...[
-                  const SizedBox(width: 4),
-                  Icon(Icons.open_in_new, size: 15, color: subtle),
-                ],
-              ],
-            ),
-          ),
+          child: _buildFileRow(context, available),
         ),
         _TransferState(
           message: message,
@@ -433,6 +442,62 @@ class _FileBody extends StatelessWidget {
           foreground: foreground,
         ),
       ],
+    );
+  }
+
+  Widget _buildFileRow(BuildContext context, bool available) {
+    return SizedBox(
+      width: 226,
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: subtle.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              attachment.isImage
+                  ? Icons.image_outlined
+                  : _fileIcon(attachment.name),
+              size: 21,
+              color: foreground,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  attachment.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  available
+                      ? '${formatBytes(attachment.size)} · tap to open'
+                      : formatBytes(attachment.size),
+                  style: TextStyle(color: subtle, fontSize: 10.5),
+                ),
+              ],
+            ),
+          ),
+          if (available) ...[
+            const SizedBox(width: 4),
+            Icon(Icons.open_in_new, size: 15, color: subtle),
+          ],
+        ],
+      ),
     );
   }
 
@@ -725,6 +790,30 @@ class _TransferState extends StatelessWidget {
 
     final progress = message.transferProgress;
     final waiting = progress <= 0;
+    final speed = message.transferSpeed;
+    final eta = message.transferEtaSeconds;
+
+    final String progressText;
+    if (waiting) {
+      progressText = 'Waiting for transfer…';
+    } else {
+      final pct = '${(progress * 100).round()}%';
+      final parts = <String>[pct];
+      final currentBytes = (progress * attachment.size).round();
+      if (attachment.size > 0) {
+        parts.add(
+          '${formatBytes(currentBytes)} / ${formatBytes(attachment.size)}',
+        );
+      }
+      if (speed > 50) {
+        parts.add(formatSpeed(speed));
+      }
+      if (eta != null && eta > 0) {
+        parts.add(formatEta(eta));
+      }
+      progressText = parts.join(' · ');
+    }
+
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Column(
@@ -740,10 +829,7 @@ class _TransferState extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            waiting ? 'Waiting for transfer…' : '${(progress * 100).round()}%',
-            style: TextStyle(color: subtle, fontSize: 10),
-          ),
+          Text(progressText, style: TextStyle(color: subtle, fontSize: 10)),
         ],
       ),
     );

@@ -682,10 +682,17 @@ class BleTransport {
       try {
         maxWrite = await central.getMaximumWriteLength(
           peripheral,
-          type: GATTCharacteristicWriteType.withResponse,
+          type: GATTCharacteristicWriteType.withoutResponse,
         );
       } catch (_) {
-        // Keep the conservative default.
+        try {
+          maxWrite = await central.getMaximumWriteLength(
+            peripheral,
+            type: GATTCharacteristicWriteType.withResponse,
+          );
+        } catch (_) {
+          // Keep the conservative default.
+        }
       }
       link.maxChunkSize = _chunkSizeFor(maxWrite);
 
@@ -930,11 +937,16 @@ class BleTransport {
               final peripheral = link.peripheral;
               final tx = link.tx;
               if (central == null || peripheral == null || tx == null) return;
+              final canWithoutResponse = tx.properties.contains(
+                GATTCharacteristicProperty.writeWithoutResponse,
+              );
               await central.writeCharacteristic(
                 peripheral,
                 tx,
                 value: bytes,
-                type: GATTCharacteristicWriteType.withResponse,
+                type: canWithoutResponse
+                    ? GATTCharacteristicWriteType.withoutResponse
+                    : GATTCharacteristicWriteType.withResponse,
               );
             } else {
               final peripheralManager = _peripheral;

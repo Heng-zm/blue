@@ -796,6 +796,8 @@ class AppController extends ChangeNotifier {
         throw StateError('Attachment encryption size changed.');
       }
 
+      final transferStart = DateTime.now();
+      var bytesSent = 0;
       final count = attachment.chunkCount;
       for (var index = 0; index < count; index++) {
         if (_disposed) return;
@@ -834,11 +836,25 @@ class AppController extends ChangeNotifier {
           continue;
         }
 
+        bytesSent += (end - start);
+        final elapsed =
+            DateTime.now().difference(transferStart).inMilliseconds / 1000.0;
+        if (elapsed > 0.15) {
+          message.transferSpeed = bytesSent / elapsed;
+          final remainingBytes = ciphertext.length - bytesSent;
+          if (message.transferSpeed > 10) {
+            message.transferEtaSeconds =
+                (remainingBytes / message.transferSpeed).ceil();
+          }
+        }
+
         message.transferProgress = (index + 1) / count;
         _notifyTransferProgress();
       }
 
       message.transferProgress = 1;
+      message.transferSpeed = 0;
+      message.transferEtaSeconds = null;
       message.transferError = null;
       _startedBlobTransfers.remove(message.id);
       _blobAttempts.remove(message.id);
@@ -848,6 +864,8 @@ class AppController extends ChangeNotifier {
       );
     } catch (error) {
       message.transferError = 'Transfer interrupted';
+      message.transferSpeed = 0;
+      message.transferEtaSeconds = null;
       _startedBlobTransfers.remove(message.id);
       _addLog('Transfer failed: $error', BleLogLevel.warning);
     }
@@ -863,7 +881,7 @@ class AppController extends ChangeNotifier {
       if (transport == null) return false;
       if (transport.pendingBytes <= blobSendHighWaterBytes) return true;
       if (DateTime.now().isAfter(deadline)) return false;
-      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     return false;
   }
@@ -1351,6 +1369,16 @@ class AppController extends ChangeNotifier {
     incoming.chunks[chunk.index] = chunk.data;
     incoming.bytes += chunk.data.length;
     final message = incoming.message;
+    final elapsed =
+        DateTime.now().difference(incoming.createdAt).inMilliseconds / 1000.0;
+    if (elapsed > 0.15) {
+      message.transferSpeed = incoming.bytes / elapsed;
+      final remainingBytes = incoming.totalLength - incoming.bytes;
+      if (message.transferSpeed > 10) {
+        message.transferEtaSeconds = (remainingBytes / message.transferSpeed)
+            .ceil();
+      }
+    }
     message.transferProgress = (incoming.chunks.length / incoming.count) * 0.99;
     _notifyTransferProgress();
 
@@ -1410,6 +1438,8 @@ class AppController extends ChangeNotifier {
       );
       attachment.path = path;
       message.transferProgress = 1;
+      message.transferSpeed = 0;
+      message.transferEtaSeconds = null;
       message.transferError = null;
       _incomingBlobs.remove(incoming.key);
       _addLog('Received ${message.kind.name} ${attachment.name}');
@@ -1418,6 +1448,8 @@ class AppController extends ChangeNotifier {
           ? error.message
           : 'Transfer failed';
       message.transferProgress = 0;
+      message.transferSpeed = 0;
+      message.transferEtaSeconds = null;
       _incomingBlobs.remove(incoming.key);
       _addLog('Blob receive failed: $error', BleLogLevel.warning);
     }

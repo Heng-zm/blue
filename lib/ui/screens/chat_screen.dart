@@ -80,11 +80,14 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
 
-  Future<void> _pickFile() async {
+  Future<void> _pickFile({bool imageOnly = false}) async {
     if (_pickingFile || _recording) return;
     setState(() => _pickingFile = true);
     try {
-      final file = await FilePicker.pickFile(dialogTitle: 'Send a file');
+      final file = await FilePicker.pickFile(
+        type: imageOnly ? FileType.image : FileType.any,
+        dialogTitle: imageOnly ? 'Send an image' : 'Send a file',
+      );
       if (file == null || !mounted) return;
 
       final length = await file.length();
@@ -361,7 +364,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       : 'Message $title',
                   busy: _pickingFile || _startingRecording,
                   onSend: _send,
-                  onAttach: _pickFile,
+                  onPickImage: () => _pickFile(imageOnly: true),
+                  onAttach: () => _pickFile(imageOnly: false),
                   onRecord: _toggleRecording,
                 ),
             ],
@@ -642,6 +646,7 @@ class _Composer extends StatelessWidget {
     required this.hint,
     required this.busy,
     required this.onSend,
+    required this.onPickImage,
     required this.onAttach,
     required this.onRecord,
   });
@@ -651,6 +656,7 @@ class _Composer extends StatelessWidget {
   final String hint;
   final bool busy;
   final Future<void> Function() onSend;
+  final VoidCallback onPickImage;
   final VoidCallback onAttach;
   final Future<void> Function() onRecord;
 
@@ -661,12 +667,17 @@ class _Composer extends StatelessWidget {
         color: MgsColors.ink,
         border: Border(top: BorderSide(color: MgsColors.line)),
       ),
-      padding: const EdgeInsets.fromLTRB(8, 10, 12, 10),
+      padding: const EdgeInsets.fromLTRB(6, 10, 12, 10),
       child: SafeArea(
         top: false,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            IconButton(
+              onPressed: busy ? null : onPickImage,
+              tooltip: 'Send an image',
+              icon: const Icon(Icons.photo_outlined, size: 21),
+            ),
             IconButton(
               onPressed: busy ? null : onAttach,
               tooltip: 'Send a file',

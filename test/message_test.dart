@@ -122,7 +122,25 @@ void main() {
 
     expect(
       build(kind: MessageKind.file, text: '', attachment: attachment()).preview,
-      'File · photo.jpg',
+      'Photo · photo.jpg',
+    );
+    expect(
+      build(
+        kind: MessageKind.file,
+        text: '',
+        attachment: MessageAttachment(
+          blobId: '0123456789abcdef',
+          transferId: 'deadbeef',
+          blobNonce: '000102030405060708090a0b',
+          name: 'doc.pdf',
+          mimeType: 'application/pdf',
+          size: 1024,
+          cipherBytes: 1024 + 28,
+          chunkCount: 1,
+          digest: 'a' * 64,
+        ),
+      ).preview,
+      'File · doc.pdf',
     );
     expect(
       build(

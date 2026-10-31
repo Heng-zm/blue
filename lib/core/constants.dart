@@ -3,7 +3,7 @@ import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
 /// Human-facing app name.
 const String appName = 'MGS';
 const String appTagline = 'Offline mesh messenger';
-const String appVersion = '0.2.1';
+const String appVersion = '0.2.2';
 
 /// Wire protocol version. Bump when the frame or envelope layout changes.
 ///
@@ -41,7 +41,7 @@ const int maxMimeTypeLength = 80;
 const int maxPassphraseLength = 128;
 const int minPassphraseLength = 8;
 const int maxIncomingBlobs = 32;
-const int blobSendHighWaterBytes = 64 * 1024;
+const int blobSendHighWaterBytes = 128 * 1024;
 
 /// GATT identifiers. The leading bytes spell "mgs-mesh-v1" in ASCII; the last
 /// byte keeps the service and its two characteristics distinct.

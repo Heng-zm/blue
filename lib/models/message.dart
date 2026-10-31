@@ -55,6 +55,18 @@ class MessageAttachment {
 
   bool get isVoice => durationMs > 0;
 
+  bool get isImage {
+    final lower = name.toLowerCase();
+    return mimeType.startsWith('image/') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.heic') ||
+        lower.endsWith('.bmp');
+  }
+
   String get key => '$blobId:$transferId';
 
   MessageAttachment copyWith({String? path}) => MessageAttachment(
@@ -93,6 +105,8 @@ class Message {
     this.encrypted = false,
     this.decryptionFailed = false,
     this.transferProgress = 0,
+    this.transferSpeed = 0,
+    this.transferEtaSeconds,
     this.transferError,
   });
 
@@ -113,12 +127,21 @@ class Message {
 
   /// 0..1 for attachment transfers.
   double transferProgress;
+
+  /// Current transfer speed in bytes per second.
+  double transferSpeed;
+
+  /// Estimated time remaining in seconds.
+  int? transferEtaSeconds;
+
   String? transferError;
 
   bool get isBroadcast => to == broadcastRecipient;
 
   bool get isAttachment =>
       kind == MessageKind.file || kind == MessageKind.voice;
+
+  bool get isImage => kind == MessageKind.file && attachment?.isImage == true;
 
   bool get isComplete =>
       decryptionFailed || !isAttachment || attachment?.available == true;
@@ -133,6 +156,9 @@ class Message {
     if (decryptionFailed) return 'Encrypted message';
     if (kind == MessageKind.voice) {
       return 'Voice message · ${_durationLabel(attachment?.durationMs ?? 0)}';
+    }
+    if (isImage) {
+      return 'Photo · ${attachment?.name ?? 'photo'}';
     }
     if (kind == MessageKind.file) {
       return 'File · ${attachment?.name ?? 'attachment'}';
@@ -273,6 +299,8 @@ class Message {
     MessageStatus? status,
     MessageAttachment? attachment,
     double? transferProgress,
+    double? transferSpeed,
+    int? transferEtaSeconds,
     String? transferError,
   }) {
     return Message(
@@ -291,6 +319,8 @@ class Message {
       encrypted: encrypted,
       decryptionFailed: decryptionFailed,
       transferProgress: transferProgress ?? this.transferProgress,
+      transferSpeed: transferSpeed ?? this.transferSpeed,
+      transferEtaSeconds: transferEtaSeconds ?? this.transferEtaSeconds,
       transferError: transferError ?? this.transferError,
     );
   }

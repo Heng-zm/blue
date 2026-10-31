@@ -37,6 +37,29 @@ String formatBytes(int bytes) {
   return '${value.toStringAsFixed(value < 10 ? 1 : 0)} MB';
 }
 
+/// Human-readable transfer rate (e.g. `48 KB/s` or `1.5 MB/s`).
+String formatSpeed(double bytesPerSecond) {
+  if (bytesPerSecond <= 0) return '';
+  if (bytesPerSecond < 1024) {
+    return '${bytesPerSecond.toStringAsFixed(0)} B/s';
+  }
+  if (bytesPerSecond < 1024 * 1024) {
+    final kb = bytesPerSecond / 1024;
+    return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB/s';
+  }
+  final mb = bytesPerSecond / (1024 * 1024);
+  return '${mb.toStringAsFixed(1)} MB/s';
+}
+
+/// Human-readable ETA countdown (e.g. `ETA 15s` or `ETA 1m 20s`).
+String formatEta(int? seconds) {
+  if (seconds == null || seconds <= 0) return '';
+  if (seconds < 60) return 'ETA ${seconds}s';
+  final minutes = seconds ~/ 60;
+  final remaining = seconds % 60;
+  return 'ETA ${minutes}m ${remaining.toString().padLeft(2, '0')}s';
+}
+
 /// `m:ss` for voice note durations.
 String durationLabel(int milliseconds) {
   final totalSeconds = (milliseconds / 1000).round().clamp(0, 9999);

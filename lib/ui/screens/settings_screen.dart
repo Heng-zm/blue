@@ -105,6 +105,63 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 22),
+                const _SectionLabel('WI-FI & USB MESH'),
+                const SizedBox(height: 9),
+                MgsCard(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    children: [
+                      _StatusRow(
+                        icon: Icons.wifi,
+                        title: 'Same Wi-Fi Link',
+                        value: controller.localIps.isNotEmpty
+                            ? 'Broadcasting (${controller.localIps.first})'
+                            : 'Listening (port 52525)',
+                        color: controller.lanActive
+                            ? MgsColors.mint
+                            : MgsColors.lime,
+                      ),
+                      const Divider(),
+                      _StatusRow(
+                        icon: Icons.usb,
+                        title: 'USB Link',
+                        value: controller.usbConnected
+                            ? 'USB tethering active'
+                            : 'Auto-probing ADB & Tethering',
+                        color: controller.usbConnected
+                            ? MgsColors.mint
+                            : MgsColors.text,
+                      ),
+                      const Divider(),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.add_link,
+                          size: 20,
+                          color: MgsColors.muted,
+                        ),
+                        title: const Text(
+                          'Direct Connect by IP',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                        subtitle: const Text(
+                          'Link to a Wi-Fi IP or USB cable address directly',
+                          style: TextStyle(
+                            color: MgsColors.muted,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right,
+                          size: 18,
+                          color: MgsColors.muted,
+                        ),
+                        onTap: () => _connectIp(context),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 22),
                 const _SectionLabel('MESH'),
                 const SizedBox(height: 9),
                 MgsCard(
@@ -564,6 +621,127 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _connectIp(BuildContext context) async {
+    final text = TextEditingController();
+    var connecting = false;
+    String? status;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          Future<void> submit(String ip) async {
+            final target = ip.trim();
+            if (target.isEmpty) return;
+            setDialogState(() {
+              connecting = true;
+              status = 'Connecting to $target…';
+            });
+            final ok = await controller.connectToIp(target);
+            if (dialogContext.mounted) {
+              setDialogState(() {
+                connecting = false;
+                status = ok
+                    ? 'Connected successfully!'
+                    : 'Connection failed. Ensure peer has MGS open.';
+              });
+              if (ok) {
+                await Future<void>.delayed(const Duration(milliseconds: 600));
+                if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+              }
+            }
+          }
+
+          return AlertDialog(
+            backgroundColor: MgsColors.panelHigh,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+            ),
+            title: const Text(
+              'Connect via Wi-Fi or USB',
+              style: TextStyle(fontSize: 18),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Connect directly to a peer on the same Wi-Fi network, '
+                  'USB tethering, or ADB port forwarding.',
+                  style: TextStyle(color: MgsColors.muted, fontSize: 12.5),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: text,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Peer IP address',
+                    hintText: 'e.g. 192.168.1.15 or 127.0.0.1',
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: submit,
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    ActionChip(
+                      label: const Text('127.0.0.1 (ADB)'),
+                      onPressed: connecting
+                          ? null
+                          : () {
+                              text.text = '127.0.0.1';
+                              submit('127.0.0.1');
+                            },
+                    ),
+                    ActionChip(
+                      label: const Text('192.168.42.1 (USB)'),
+                      onPressed: connecting
+                          ? null
+                          : () {
+                              text.text = '192.168.42.1';
+                              submit('192.168.42.1');
+                            },
+                    ),
+                  ],
+                ),
+                if (status != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    status!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: status!.contains('success')
+                          ? MgsColors.lime
+                          : MgsColors.amber,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: connecting ? null : () => submit(text.text),
+                child: connecting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Connect'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    text.dispose();
   }
 
   Future<void> _confirmClear(BuildContext context) async {

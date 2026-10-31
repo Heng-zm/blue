@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/constants.dart';
+import '../../models/peer.dart';
 import '../../state/app_controller.dart';
 import '../../services/voice_recorder.dart';
 import '../format.dart';
@@ -238,10 +239,16 @@ class _ChatScreenState extends State<ChatScreen> {
         final messages = controller.messagesFor(widget.threadId);
         final title = controller.titleForThread(widget.threadId);
         final online = controller.isPeerOnline(widget.threadId);
+        final peer = controller.peerFor(widget.threadId);
+        final linkLabel = peer?.connectionType == PeerConnectionType.wifi
+            ? 'Connected via Wi-Fi'
+            : peer?.connectionType == PeerConnectionType.usb
+            ? 'Connected via USB'
+            : 'Connected · Bluetooth mesh';
         final status = _isBroadcast
             ? 'Public channel · ${controller.peers.where((p) => p.connected).length} nearby'
             : online
-            ? 'Connected · hop-by-hop delivery'
+            ? '$linkLabel · direct delivery'
             : 'Offline · queued for the mesh';
 
         if (messages.length != _lastCount) {

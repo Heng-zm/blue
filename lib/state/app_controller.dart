@@ -19,6 +19,7 @@ import '../protocol/message_codec.dart';
 import '../security/mesh_cipher.dart';
 import '../services/ble_transport.dart';
 import '../services/blob_store.dart';
+import '../services/lan_transport.dart';
 import '../services/storage_service.dart';
 
 class LogLine {
@@ -75,6 +76,10 @@ class AppController extends ChangeNotifier {
   MeshCipher? _meshCipher;
   BleTransport? _transport;
   StreamSubscription<BleEvent>? _transportSubscription;
+  LanTransport? _lanTransport;
+  StreamSubscription<LanEvent>? _lanSubscription;
+  List<String> _localIps = [];
+  bool _usbConnected = false;
 
   final List<Message> _messages = [];
   final Map<String, Peer> _peers = {};
@@ -120,6 +125,10 @@ class AppController extends ChangeNotifier {
   bool get encryptionEnabled => _meshCipher != null;
   String get encryptionLabel => _meshCipher == null ? 'Off' : 'On';
   int get incomingTransferCount => _incomingBlobs.length;
+  bool get lanActive => _lanTransport?.hasReadyLinks == true;
+  List<String> get localIps => List.unmodifiable(_localIps);
+  bool get usbConnected => _usbConnected;
+  Peer? peerFor(String id) => _peers[id];
 
   bool get bluetoothReady => _bleState == BluetoothLowEnergyState.poweredOn;
 
@@ -376,6 +385,7 @@ class AppController extends ChangeNotifier {
     _router ??= MeshRouter(selfId: peerId, selfName: displayName);
     _router!.selfName = displayName;
     _transport?.setDisplayName(displayName);
+    _lanTransport?.setDisplayName(displayName);
     notifyListeners();
     await _saveNow();
     if (radioEnabled) await _startTransport();
@@ -386,6 +396,7 @@ class AppController extends ChangeNotifier {
     displayName = normalizeDisplayName(name);
     _router?.selfName = displayName;
     _transport?.setDisplayName(displayName);
+    _lanTransport?.setDisplayName(displayName);
     notifyListeners();
     await _saveNow();
   }
@@ -665,7 +676,8 @@ class AppController extends ChangeNotifier {
 
   Future<bool> _sendOutboxMessage(Message message) async {
     final transport = _transport;
-    if (transport == null) return false;
+    final lan = _lanTransport;
+    if (transport == null && lan == null) return false;
     if (!_sendingIds.add(message.id)) return false;
 
     try {
@@ -678,7 +690,9 @@ class AppController extends ChangeNotifier {
       }
 
       if (message.isBroadcast) {
-        final sent = transport.broadcast(FrameType.message, payload) > 0;
+        final sentLan = lan?.broadcast(FrameType.message, payload) ?? 0;
+        final sentBle = transport?.broadcast(FrameType.message, payload) ?? 0;
+        final sent = (sentLan + sentBle) > 0;
         if (sent) {
           message.status = MessageStatus.sent;
           _outbox.remove(message.id);
@@ -688,9 +702,17 @@ class AppController extends ChangeNotifier {
         return sent;
       }
 
-      var sent = transport.sendToPeer(message.to, FrameType.message, payload);
+      var sent = false;
+      if (lan != null) {
+        sent = lan.sendToPeer(message.to, FrameType.message, payload);
+      }
+      if (!sent && transport != null) {
+        sent = transport.sendToPeer(message.to, FrameType.message, payload);
+      }
       if (!sent) {
-        sent = transport.broadcast(FrameType.message, payload) > 0;
+        final sentLan = lan?.broadcast(FrameType.message, payload) ?? 0;
+        final sentBle = transport?.broadcast(FrameType.message, payload) ?? 0;
+        sent = (sentLan + sentBle) > 0;
       }
       if (sent) {
         message.status = MessageStatus.sent;
@@ -805,7 +827,10 @@ class AppController extends ChangeNotifier {
           throw StateError('The radio is busy or stopped.');
         }
         final current = _transport;
-        if (current == null) throw StateError('The radio stopped.');
+        final lan = _lanTransport;
+        if (current == null && lan == null) {
+          throw StateError('Transport stopped.');
+        }
 
         final start = index * blobChunkPayloadBytes;
         final end = min(start + blobChunkPayloadBytes, ciphertext.length);
@@ -822,11 +847,16 @@ class AppController extends ChangeNotifier {
         ).encode();
 
         var sent = false;
-        if (!message.isBroadcast) {
+        if (!message.isBroadcast && lan != null) {
+          sent = lan.sendToPeer(message.to, FrameType.blob, chunk);
+        }
+        if (!sent && current != null && !message.isBroadcast) {
           sent = current.sendToPeer(message.to, FrameType.blob, chunk);
         }
         if (!sent) {
-          sent = current.broadcast(FrameType.blob, chunk) > 0;
+          final sentLan = lan?.broadcast(FrameType.blob, chunk) ?? 0;
+          final sentBle = current?.broadcast(FrameType.blob, chunk) ?? 0;
+          sent = (sentLan + sentBle) > 0;
         }
         if (!sent) {
           if (!await _waitForReadyLink()) {
@@ -877,9 +907,9 @@ class AppController extends ChangeNotifier {
   Future<bool> _waitForBlobCapacity() async {
     final deadline = DateTime.now().add(const Duration(seconds: 60));
     while (!_disposed) {
-      final transport = _transport;
-      if (transport == null) return false;
-      if (transport.pendingBytes <= blobSendHighWaterBytes) return true;
+      final blePending = _transport?.pendingBytes ?? 0;
+      final lanPending = _lanTransport?.pendingBytes ?? 0;
+      if (blePending + lanPending <= blobSendHighWaterBytes) return true;
       if (DateTime.now().isAfter(deadline)) return false;
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
@@ -889,9 +919,10 @@ class AppController extends ChangeNotifier {
   Future<bool> _waitForReadyLink() async {
     final deadline = DateTime.now().add(const Duration(seconds: 30));
     while (!_disposed && DateTime.now().isBefore(deadline)) {
-      final transport = _transport;
-      if (transport == null) return false;
-      if (transport.hasReadyLinks) return true;
+      if ((_transport?.hasReadyLinks ?? false) ||
+          (_lanTransport?.hasReadyLinks ?? false)) {
+        return true;
+      }
       await Future<void>.delayed(const Duration(milliseconds: 150));
     }
     return false;
@@ -905,7 +936,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _retryPending() async {
-    if (_transport == null || _retryInFlight) return;
+    if ((_transport == null && _lanTransport == null) || _retryInFlight) return;
     _retryInFlight = true;
     try {
       final now = DateTime.now();
@@ -1013,18 +1044,36 @@ class AppController extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Future<void> _startTransport() async {
-    if (_transport != null || !initialized || _disposed) return;
-    final transport = BleTransport(
-      selfId: peerId,
-      selfName: displayName.isEmpty ? 'MGS user' : displayName,
-    );
-    _transport = transport;
-    _radioActive = true;
-    _transportSubscription = transport.events.listen(_onBleEvent);
-    try {
-      await transport.start();
-    } catch (error) {
-      _addLog('Radio failed to start: $error', BleLogLevel.error);
+    if (!initialized || _disposed) return;
+    if (_transport == null) {
+      final transport = BleTransport(
+        selfId: peerId,
+        selfName: displayName.isEmpty ? 'MGS user' : displayName,
+      );
+      _transport = transport;
+      _radioActive = true;
+      _transportSubscription = transport.events.listen(_onBleEvent);
+      try {
+        await transport.start();
+      } catch (error) {
+        _addLog('Radio failed to start: $error', BleLogLevel.error);
+      }
+    }
+    if (_lanTransport == null) {
+      final lan = LanTransport(
+        selfId: peerId,
+        selfName: displayName.isEmpty ? 'MGS user' : displayName,
+      );
+      _lanTransport = lan;
+      _lanSubscription = lan.events.listen(_onLanEvent);
+      try {
+        await lan.start();
+      } catch (error) {
+        _addLog(
+          'LAN/USB transport failed to start: $error',
+          BleLogLevel.warning,
+        );
+      }
     }
     unawaited(_retryPending());
     notifyListeners();
@@ -1033,12 +1082,20 @@ class AppController extends ChangeNotifier {
   Future<void> _stopTransport() async {
     final transport = _transport;
     _transport = null;
+    final lan = _lanTransport;
+    _lanTransport = null;
+
     _radioActive = false;
     _advertising = false;
     _scanning = false;
     await _transportSubscription?.cancel();
     _transportSubscription = null;
     if (transport != null) await transport.dispose();
+
+    await _lanSubscription?.cancel();
+    _lanSubscription = null;
+    if (lan != null) await lan.dispose();
+
     for (final peer in _peers.values) {
       peer.connected = false;
     }
@@ -1046,6 +1103,75 @@ class AppController extends ChangeNotifier {
       device.connected = false;
     }
     notifyListeners();
+  }
+
+  void _onLanEvent(LanEvent event) {
+    if (_disposed) return;
+    switch (event) {
+      case LanLogEvent():
+        _addLog(event.message, event.level);
+      case LanStateEvent():
+        _localIps = event.localAddresses;
+        _usbConnected = event.usbConnected;
+        notifyListeners();
+      case LanPeerUpEvent():
+        final peer = _peers.putIfAbsent(
+          event.peerId,
+          () => Peer(id: event.peerId, name: event.name),
+        );
+        peer.name = event.name;
+        peer.connected = true;
+        peer.connectionType = event.linkType == LanLinkType.usb
+            ? PeerConnectionType.usb
+            : PeerConnectionType.wifi;
+        peer.ipAddress = event.address;
+        peer.lastSeen = DateTime.now();
+
+        _addLog(
+          '${event.name} connected via ${event.linkType.name.toUpperCase()} (${event.address})',
+        );
+        unawaited(_flushPendingFor(event.peerId));
+        unawaited(_retryPending());
+        notifyListeners();
+      case LanPeerDownEvent():
+        final peer = _peers[event.peerId];
+        if (peer != null) {
+          final onBle =
+              _transport?.connectedPeerIds.contains(event.peerId) ?? false;
+          if (!onBle) {
+            peer.connected = false;
+            peer.lastSeen = DateTime.now();
+          } else {
+            peer.connectionType = PeerConnectionType.ble;
+          }
+          peer.ipAddress = null;
+        }
+        _addLog(
+          '${peer?.name ?? shortPeerId(event.peerId)} disconnected from LAN/USB',
+          BleLogLevel.warning,
+        );
+        notifyListeners();
+      case LanDataEvent():
+        _onData(
+          BleDataEvent(
+            linkId: event.linkId,
+            peerId: event.peerId,
+            type: event.type,
+            payload: event.payload,
+          ),
+        );
+    }
+  }
+
+  Future<bool> connectToIp(String host, {int port = defaultLanPort}) async {
+    final lan = _lanTransport;
+    if (lan == null) return false;
+    _addLog('Connecting to $host:$port…');
+    final ok = await lan.connectTo(host, port: port);
+    if (ok) {
+      _addLog('Connected to $host:$port');
+    }
+    return ok;
   }
 
   void _onBleEvent(BleEvent event) {
@@ -1162,16 +1288,22 @@ class AppController extends ChangeNotifier {
 
     // Acknowledge before the duplicate check so retries can recover a lost ACK.
     if (result.ackMessageId != null) {
-      _transport?.sendOnLink(
-        event.linkId,
-        FrameType.ack,
-        bytesFromHex(result.ackMessageId!, byteLength: 8),
-      );
+      final ackBytes = bytesFromHex(result.ackMessageId!, byteLength: 8);
+      if (event.linkId.startsWith('lan:')) {
+        _lanTransport?.sendOnLink(event.linkId, FrameType.ack, ackBytes);
+      } else {
+        _transport?.sendOnLink(event.linkId, FrameType.ack, ackBytes);
+      }
     }
 
     // Relay without needing the passphrase: only the header is inspected.
     final relay = result.relay;
     if (relay != null && relayEnabled) {
+      _lanTransport?.broadcast(
+        FrameType.message,
+        relay,
+        excludePeerId: event.peerId,
+      );
       _transport?.broadcast(
         FrameType.message,
         relay,
@@ -1349,6 +1481,11 @@ class AppController extends ChangeNotifier {
 
     final relay = result.relay;
     if (relay != null && relayEnabled) {
+      _lanTransport?.broadcast(
+        FrameType.blob,
+        relay,
+        excludePeerId: event.peerId,
+      );
       _transport?.broadcast(FrameType.blob, relay, excludePeerId: event.peerId);
     }
     if (result.duplicate) return;
@@ -1615,6 +1752,11 @@ class AppController extends ChangeNotifier {
     _transportSubscription = null;
     await _transport?.dispose();
     _transport = null;
+
+    await _lanSubscription?.cancel();
+    _lanSubscription = null;
+    await _lanTransport?.dispose();
+    _lanTransport = null;
   }
 }
 

@@ -145,8 +145,8 @@ The protocol layer is pure Dart and covered by unit tests: frame encoding, chunk
 
 Releases are built and published by GitHub Actions:
 
-1. Bump `version` in `pubspec.yaml` (for example `0.2.2+5`).
-2. Add `docs/release-notes/v0.2.2.md` with the release notes. This file is optional; without it, GitHub generates the notes.
+1. Bump `version` in `pubspec.yaml` (for example `0.2.3+6`).
+2. Add `docs/release-notes/v0.2.3.md` with the release notes. This file is optional; without it, GitHub generates the notes.
 3. Push to `main`.
 
 The `CI` workflow builds Android, Windows, and unsigned iOS artifacts. When every job succeeds, the `release` job checks for the `v<version>` tag. If no release exists yet, it stages the four platform assets, writes `SHA256SUMS.txt`, and publishes the GitHub release automatically. Pushes that do not change the version are skipped, so the same version is never published twice.

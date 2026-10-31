@@ -148,6 +148,30 @@ class NearbyScreen extends StatelessWidget {
                 const _SectionLabel('OPEN CHANNEL'),
                 const SizedBox(height: 10),
                 ChatTile(summary: broadcast, onTap: () => onOpenChat('*')),
+                if (controller.peers.any(
+                  (p) =>
+                      p.connected && p.connectionType != PeerConnectionType.ble,
+                )) ...[
+                  const SizedBox(height: 22),
+                  _SectionLabel(
+                    'WI-FI & USB PEERS',
+                    trailing:
+                        '${controller.peers.where((p) => p.connected && p.connectionType != PeerConnectionType.ble).length}',
+                  ),
+                  const SizedBox(height: 10),
+                  for (final peer in controller.peers.where(
+                    (p) =>
+                        p.connected &&
+                        p.connectionType != PeerConnectionType.ble,
+                  ))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _LanPeerTile(
+                        peer: peer,
+                        onTap: () => onOpenChat(peer.id),
+                      ),
+                    ),
+                ],
                 const SizedBox(height: 22),
                 _SectionLabel('NEARBY DEVICES', trailing: '${devices.length}'),
                 const SizedBox(height: 10),
@@ -180,6 +204,90 @@ class NearbyScreen extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _LanPeerTile extends StatelessWidget {
+  const _LanPeerTile({required this.peer, required this.onTap});
+
+  final Peer peer;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isUsb = peer.connectionType == PeerConnectionType.usb;
+    final icon = isUsb ? Icons.usb : Icons.wifi;
+    final label = isUsb ? 'USB Link' : 'Same Wi-Fi';
+    final addr = peer.ipAddress != null ? ' · ${peer.ipAddress}' : '';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: MgsColors.panel,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: MgsColors.mint.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              AvatarCircle(label: peer.name, online: true, size: 44),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      peer.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14.5,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Connected · $label$addr',
+                      style: const TextStyle(
+                        color: MgsColors.mint,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: MgsColors.mint.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 14, color: MgsColors.mint),
+                    const SizedBox(width: 4),
+                    const Text(
+                      'FAST',
+                      style: TextStyle(
+                        color: MgsColors.mint,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

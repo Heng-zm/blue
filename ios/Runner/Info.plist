@@ -30,6 +30,8 @@
 	<string>MGS uses Bluetooth to find nearby devices and relay messages without the internet.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>MGS advertises a Bluetooth service so nearby devices can connect and exchange messages.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>MGS connects to nearby mesh peers over local Wi-Fi and USB networks without the internet.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>MGS uses the microphone only when you record a voice note to send over the mesh.</string>
 	<key>UIBackgroundModes</key>

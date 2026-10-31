@@ -2,11 +2,15 @@ import 'package:characters/characters.dart';
 
 import '../core/ids.dart';
 
+enum PeerConnectionType { ble, wifi, usb }
+
 class Peer {
   Peer({
     required this.id,
     required this.name,
     this.connected = false,
+    this.connectionType = PeerConnectionType.ble,
+    this.ipAddress,
     this.rssi = 0,
     DateTime? lastSeen,
   }) : lastSeen = lastSeen ?? DateTime.now();
@@ -14,6 +18,8 @@ class Peer {
   final String id;
   String name;
   bool connected;
+  PeerConnectionType connectionType;
+  String? ipAddress;
   int rssi;
   DateTime lastSeen;
 

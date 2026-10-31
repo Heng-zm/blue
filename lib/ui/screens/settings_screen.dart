@@ -185,6 +185,67 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 22),
+                const _SectionLabel('ENCRYPTION'),
+                const SizedBox(height: 9),
+                MgsCard(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                  child: Column(
+                    children: [
+                      _StatusRow(
+                        icon: controller.encryptionEnabled
+                            ? Icons.lock_outline
+                            : Icons.lock_open_outlined,
+                        title: 'Mesh passphrase',
+                        value: controller.encryptionEnabled ? 'On' : 'Off',
+                        color: controller.encryptionEnabled
+                            ? MgsColors.mint
+                            : MgsColors.amber,
+                      ),
+                      const Divider(),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.key_outlined,
+                          size: 20,
+                          color: MgsColors.muted,
+                        ),
+                        title: Text(
+                          controller.encryptionEnabled
+                              ? 'Change passphrase'
+                              : 'Set passphrase',
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        subtitle: const Text(
+                          'Encrypt messages, files, and voice notes with '
+                          'AES-256-GCM',
+                          style: TextStyle(
+                            color: MgsColors.muted,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right,
+                          size: 18,
+                          color: MgsColors.muted,
+                        ),
+                        onTap: () => _editPassphrase(context),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Everyone in the mesh must use the same passphrase. '
+                        'Relays forward ciphertext without being able to read '
+                        'it. There is no recovery: if you forget it, old '
+                        'encrypted messages stay locked.',
+                        style: TextStyle(
+                          color: MgsColors.muted,
+                          fontSize: 11.5,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 22),
                 const _SectionLabel('DATA'),
                 const SizedBox(height: 9),
                 MgsCard(
@@ -238,20 +299,31 @@ class SettingsScreen extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
                   child: Column(
                     children: [
-                      _InfoRow(label: 'Version', value: '0.1.1'),
+                      _InfoRow(label: 'Version', value: appVersion),
                       const SizedBox(height: 9),
-                      _InfoRow(label: 'Protocol', value: 'MGS/1'),
+                      _InfoRow(
+                        label: 'Protocol',
+                        value: 'MGS/$protocolVersion',
+                      ),
+                      const SizedBox(height: 9),
+                      _InfoRow(
+                        label: 'Encryption',
+                        value: controller.encryptionEnabled
+                            ? 'AES-256-GCM'
+                            : 'Off',
+                      ),
                       const SizedBox(height: 9),
                       _InfoRow(label: 'Transport', value: 'BLE GATT'),
                       const SizedBox(height: 9),
                       _InfoRow(label: 'Internet', value: 'Not used'),
                       const Divider(height: 26),
                       const Text(
-                        'Messages are not end-to-end encrypted yet. Anyone '
-                        'running MGS nearby and relaying a message could read '
-                        'it. Treat the Nearby channel as public. iOS and '
-                        'Android may pause Bluetooth when the app is in the '
-                        'background; keep MGS open for reliable meshing.',
+                        'With a mesh passphrase set, messages, files (up to '
+                        '5 MB), and voice notes (up to 60 seconds) are '
+                        'encrypted end to end. Nearby is still public: anyone '
+                        'with the same passphrase can read it. iOS and Android '
+                        'may pause Bluetooth in the background; keep MGS open '
+                        'for reliable meshing.',
                         style: TextStyle(
                           color: MgsColors.muted,
                           fontSize: 11.5,
@@ -320,6 +392,179 @@ class SettingsScreen extends StatelessWidget {
     if (result != null) {
       await controller.updateDisplayName(result);
     }
+  }
+
+  Future<void> _editPassphrase(BuildContext context) async {
+    final text = TextEditingController();
+    final enabled = controller.encryptionEnabled;
+    var obscure = true;
+    String? error;
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          void submit() {
+            final value = text.text.trim();
+            if (value.length < minPassphraseLength) {
+              setDialogState(
+                () => error = 'Use at least $minPassphraseLength characters.',
+              );
+              return;
+            }
+            if (value.length > maxPassphraseLength) {
+              setDialogState(
+                () => error = 'Use at most $maxPassphraseLength characters.',
+              );
+              return;
+            }
+            Navigator.of(dialogContext).pop(value);
+          }
+
+          return AlertDialog(
+            backgroundColor: MgsColors.panelHigh,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+            ),
+            title: Text(
+              enabled ? 'Change passphrase' : 'Set a mesh passphrase',
+              style: const TextStyle(fontSize: 18),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Use the same passphrase on every device that should read '
+                  'the mesh. Messages, files, and voice notes are encrypted '
+                  'with it before they leave this device.',
+                  style: TextStyle(
+                    color: MgsColors.muted,
+                    fontSize: 12.5,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: text,
+                  autofocus: true,
+                  obscureText: obscure,
+                  maxLength: maxPassphraseLength,
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    hintText: 'Shared mesh passphrase',
+                    counterText: '',
+                    errorText: error,
+                    suffixIcon: IconButton(
+                      onPressed: () => setDialogState(() => obscure = !obscure),
+                      icon: Icon(
+                        obscure ? Icons.visibility_off : Icons.visibility,
+                        size: 19,
+                      ),
+                      tooltip: obscure ? 'Show' : 'Hide',
+                    ),
+                  ),
+                  onSubmitted: (_) => submit(),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'At least $minPassphraseLength characters. There is no '
+                  'recovery if everyone forgets it.',
+                  style: const TextStyle(
+                    color: MgsColors.muted,
+                    fontSize: 11,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              if (enabled)
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(''),
+                  style: TextButton.styleFrom(
+                    foregroundColor: MgsColors.danger,
+                  ),
+                  child: const Text('Turn off'),
+                ),
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: submit,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 42),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                ),
+                child: Text(enabled ? 'Change' : 'Set'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    text.dispose();
+    if (result == null) return;
+
+    if (result.isEmpty) {
+      if (!context.mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: MgsColors.panelHigh,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          title: const Text(
+            'Turn off encryption?',
+            style: TextStyle(fontSize: 18),
+          ),
+          content: const Text(
+            'New messages and attachments will travel unencrypted. Messages '
+            'already encrypted on other devices stay encrypted.',
+            style: TextStyle(
+              color: MgsColors.muted,
+              fontSize: 13,
+              height: 1.45,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: MgsColors.danger,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 42),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+              ),
+              child: const Text('Turn off'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    final failure = await controller.updatePassphrase(result);
+    if (!context.mounted) return;
+    if (failure != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(failure)));
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.isEmpty ? 'Mesh encryption is off' : 'Mesh passphrase updated',
+        ),
+      ),
+    );
   }
 
   Future<void> _confirmClear(BuildContext context) async {

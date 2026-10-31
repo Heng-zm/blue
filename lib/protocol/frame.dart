@@ -9,25 +9,29 @@ import 'dart:typed_data';
 ///
 /// Layout (big endian):
 ///
-///   0      version (1 byte)
+///   0      version (2 bytes)
 ///   1      frame type (1 byte)
 ///   2..5   packet id (uint32)
-///   6      chunk index (uint8)
-///   7      chunk count (uint8)
-///   8..    chunk payload
-const int frameVersion = 1;
-const int frameHeaderLength = 8;
-const int maxFrameChunkCount = 255;
+///   6..7   chunk index (uint16)
+///   8..9   chunk count (uint16)
+///   10..   chunk payload
+///
+/// Version 2 widened the chunk fields so a 4 KiB blob chunk still fits within
+/// the 16-bit frame limit on a low-MTU (20-byte) BLE link (413 frames).
+const int frameVersion = 2;
+const int frameHeaderLength = 10;
+const int maxFrameChunkCount = 65535;
 const int maxChunkPayloadBytes = 240;
 const int maxFramePayloadBytes = 24 * 1024;
-const int maxAssemblies = 16;
+const int maxAssemblies = 32;
 const Duration frameAssemblyTimeout = Duration(seconds: 25);
 
 enum FrameType {
   hello(1),
   message(2),
   ack(3),
-  ping(4);
+  ping(4),
+  blob(5);
 
   const FrameType(this.code);
 
@@ -64,8 +68,8 @@ class Frame {
     bytes[0] = frameVersion;
     bytes[1] = type.code;
     view.setUint32(2, packetId, Endian.big);
-    bytes[6] = chunkIndex;
-    bytes[7] = chunkCount;
+    view.setUint16(6, chunkIndex, Endian.big);
+    view.setUint16(8, chunkCount, Endian.big);
     bytes.setRange(frameHeaderLength, bytes.length, payload);
     return bytes;
   }
@@ -79,8 +83,8 @@ class Frame {
 
     final view = ByteData.sublistView(bytes);
     final packetId = view.getUint32(2, Endian.big);
-    final chunkIndex = bytes[6];
-    final chunkCount = bytes[7];
+    final chunkIndex = view.getUint16(6, Endian.big);
+    final chunkCount = view.getUint16(8, Endian.big);
     final payloadLength = bytes.length - frameHeaderLength;
 
     if (chunkCount == 0 || chunkCount > maxFrameChunkCount) return null;

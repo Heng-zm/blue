@@ -1,8 +1,11 @@
 import 'dart:collection';
+import 'dart:typed_data';
 
 import '../core/constants.dart';
 import '../core/ids.dart';
 import '../models/message.dart';
+import 'blob_codec.dart';
+import 'message_codec.dart';
 
 /// Bounded dedupe cache for message ids. Flooding is only safe if every node
 /// remembers what it has already seen.
@@ -53,22 +56,36 @@ class SeenCache {
 
 class InboundResult {
   const InboundResult({
-    this.display,
+    this.envelope,
     this.relay,
     this.ackMessageId,
     this.duplicate = false,
     this.error,
   });
 
-  /// Message to show locally, if it is addressed to this device or broadcast.
-  final Message? display;
+  /// Decoded message for local display.
+  final MessageEnvelope? envelope;
 
-  /// Re-encoded envelope with decremented TTL, to flood onward.
-  final Map<String, dynamic>? relay;
+  /// Re-encoded binary envelope with decremented TTL, to flood onward.
+  final Uint8List? relay;
 
   /// Message id to acknowledge on the ingress link, when the sender is direct.
   final String? ackMessageId;
 
+  final bool duplicate;
+  final String? error;
+}
+
+class InboundBlobResult {
+  const InboundBlobResult({
+    this.chunk,
+    this.relay,
+    this.duplicate = false,
+    this.error,
+  });
+
+  final BlobChunk? chunk;
+  final Uint8List? relay;
   final bool duplicate;
   final String? error;
 }
@@ -78,12 +95,20 @@ class InboundResult {
 /// This class has no BLE or Flutter dependencies, which keeps the tricky part
 /// of the mesh testable without hardware.
 class MeshRouter {
-  MeshRouter({required this.selfId, required this.selfName, SeenCache? seen})
-    : seen = seen ?? SeenCache();
+  MeshRouter({
+    required this.selfId,
+    required this.selfName,
+    SeenCache? seen,
+    SeenCache? seenBlobs,
+  }) : seen = seen ?? SeenCache(),
+       seenBlobs =
+           seenBlobs ??
+           SeenCache(capacity: 32768, ttl: const Duration(minutes: 30));
 
   final String selfId;
   String selfName;
   final SeenCache seen;
+  final SeenCache seenBlobs;
 
   void seedSeen(Iterable<String> messageIds) => seen.addAll(messageIds);
 
@@ -92,13 +117,20 @@ class MeshRouter {
     required String text,
     required int ttl,
     DateTime? now,
+    MessageKind kind = MessageKind.text,
+    MessageAttachment? attachment,
+    bool encrypted = false,
   }) {
     final body = text.trim();
-    if (body.isEmpty) throw ArgumentError('Message is empty.');
-    if (body.length > maxMessageLength) {
-      throw ArgumentError(
-        'Messages are limited to $maxMessageLength characters.',
-      );
+    if (kind == MessageKind.text) {
+      if (body.isEmpty) throw ArgumentError('Message is empty.');
+      if (body.length > maxMessageLength) {
+        throw ArgumentError(
+          'Messages are limited to $maxMessageLength characters.',
+        );
+      }
+    } else if (attachment == null) {
+      throw ArgumentError('Attachment metadata is required.');
     }
     if (to != broadcastRecipient && !isPeerId(to)) {
       throw ArgumentError('Invalid recipient.');
@@ -107,7 +139,7 @@ class MeshRouter {
     final message = Message(
       id: newMessageId(),
       from: selfId,
-      fromName: selfName,
+      fromName: normalizeDisplayName(selfName),
       to: to,
       text: body,
       timestampMs: (now ?? DateTime.now()).millisecondsSinceEpoch,
@@ -115,48 +147,73 @@ class MeshRouter {
       hops: 0,
       outgoing: true,
       status: MessageStatus.queued,
+      kind: kind,
+      attachment: attachment,
+      encrypted: encrypted,
     );
     seen.add(message.id, now: now);
     return message;
   }
 
-  InboundResult receive(Map<String, dynamic> wire, {String? viaPeerId}) {
-    Message message;
+  InboundResult receive(Uint8List wire, {String? viaPeerId}) {
+    MessageEnvelope envelope;
     try {
-      message = Message.fromWire(wire);
+      envelope = MessageEnvelope.decode(wire);
     } catch (error) {
       return InboundResult(error: error.toString());
     }
 
+    final header = envelope.header;
+
     // Our own message came back around the mesh.
-    if (message.from == selfId) {
+    if (header.from == selfId) {
       return const InboundResult(duplicate: true);
     }
 
     // Direct messages are acknowledged even when they are duplicates. This
     // makes a lost ACK recoverable: the sender retries and gets a fresh one.
-    final ack = message.to == selfId && viaPeerId == message.from
-        ? message.id
+    final ack = header.to == selfId && viaPeerId == header.from
+        ? header.id
         : null;
 
-    if (seen.contains(message.id)) {
+    if (seen.contains(header.id)) {
       return InboundResult(duplicate: true, ackMessageId: ack);
     }
-    seen.add(message.id);
+    seen.add(header.id);
 
-    final forMe = message.to == selfId || message.to == broadcastRecipient;
+    final forMe = header.to == selfId || header.isBroadcast;
 
-    Map<String, dynamic>? relay;
-    if (message.ttl > minTtl && message.to != selfId) {
-      relay = message
-          .copyWith(ttl: message.ttl - 1, hops: message.hops + 1)
-          .toWire();
+    Uint8List? relay;
+    if (header.ttl > minTtl && header.to != selfId) {
+      relay = envelope.withRouting(ttl: header.ttl - 1, hops: header.hops + 1);
     }
 
     return InboundResult(
-      display: forMe ? message : null,
+      envelope: forMe ? envelope : null,
       relay: relay,
       ackMessageId: ack,
     );
+  }
+
+  InboundBlobResult receiveBlob(Uint8List wire) {
+    BlobChunk chunk;
+    try {
+      chunk = BlobChunk.decode(wire);
+    } catch (error) {
+      return InboundBlobResult(error: error.toString());
+    }
+
+    final key = '${chunk.key}:${chunk.index}';
+    if (seenBlobs.contains(key)) {
+      return const InboundBlobResult(duplicate: true);
+    }
+    seenBlobs.add(key);
+
+    Uint8List? relay;
+    if (chunk.ttl > minTtl && chunk.to != selfId) {
+      relay = chunk.withRouting(ttl: chunk.ttl - 1, hops: chunk.hops + 1);
+    }
+
+    return InboundBlobResult(chunk: chunk, relay: relay);
   }
 }

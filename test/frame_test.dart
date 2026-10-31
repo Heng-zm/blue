@@ -12,8 +12,8 @@ void main() {
       final frame = Frame(
         type: FrameType.message,
         packetId: 0xDEADBEEF,
-        chunkIndex: 2,
-        chunkCount: 5,
+        chunkIndex: 300,
+        chunkCount: 700,
         payload: bytesOf([9, 8, 7]),
       );
       final encoded = frame.encode();
@@ -22,15 +22,15 @@ void main() {
       expect(encoded[1], FrameType.message.code);
       final view = ByteData.sublistView(encoded);
       expect(view.getUint32(2, Endian.big), 0xDEADBEEF);
-      expect(encoded[6], 2);
-      expect(encoded[7], 5);
+      expect(view.getUint16(6, Endian.big), 300);
+      expect(view.getUint16(8, Endian.big), 700);
 
       final decoded = Frame.tryDecode(encoded);
       expect(decoded, isNotNull);
       expect(decoded!.type, FrameType.message);
       expect(decoded.packetId, 0xDEADBEEF);
-      expect(decoded.chunkIndex, 2);
-      expect(decoded.chunkCount, 5);
+      expect(decoded.chunkIndex, 300);
+      expect(decoded.chunkCount, 700);
       expect(decoded.payload, [9, 8, 7]);
     });
 
@@ -45,17 +45,30 @@ void main() {
         payload: Uint8List(0),
       ).encode();
 
-      final badVersion = Uint8List.fromList(good)..[0] = 2;
+      final badVersion = Uint8List.fromList(good)..[0] = 1;
       expect(Frame.tryDecode(badVersion), isNull);
 
       final badType = Uint8List.fromList(good)..[1] = 99;
       expect(Frame.tryDecode(badType), isNull);
 
-      final zeroChunks = Uint8List.fromList(good)..[7] = 0;
+      final zeroChunks = Uint8List.fromList(good);
+      ByteData.sublistView(zeroChunks).setUint16(8, 0, Endian.big);
       expect(Frame.tryDecode(zeroChunks), isNull);
 
-      final badIndex = Uint8List.fromList(good)..[6] = 1;
+      final badIndex = Uint8List.fromList(good);
+      ByteData.sublistView(badIndex).setUint16(6, 1, Endian.big);
       expect(Frame.tryDecode(badIndex), isNull);
+    });
+
+    test('accepts a blob frame type', () {
+      final frame = Frame(
+        type: FrameType.blob,
+        packetId: 7,
+        chunkIndex: 0,
+        chunkCount: 1,
+        payload: bytesOf([1, 2]),
+      );
+      expect(Frame.tryDecode(frame.encode())!.type, FrameType.blob);
     });
   });
 
@@ -79,6 +92,19 @@ void main() {
       expect(frames.every((frame) => frame.chunkCount == 3), isTrue);
       expect(frames.map((frame) => frame.chunkIndex), [0, 1, 2]);
       expect(frames.every((frame) => frame.payload.length <= 20), isTrue);
+    });
+
+    test('supports more than 255 chunks for large blob payloads', () {
+      final frames = buildFrames(
+        type: FrameType.blob,
+        payload: Uint8List(300),
+        maxChunkSize: 1,
+        random: Random(4),
+      );
+      expect(frames.length, 300);
+      expect(frames.last.chunkIndex, 299);
+      expect(frames.last.chunkCount, 300);
+      expect(Frame.tryDecode(frames.last.encode())!.chunkIndex, 299);
     });
 
     test('reassembles chunks delivered out of order', () {
@@ -129,15 +155,6 @@ void main() {
           type: FrameType.message,
           payload: Uint8List(maxFramePayloadBytes + 1),
           maxChunkSize: maxChunkPayloadBytes,
-        ),
-        throwsArgumentError,
-      );
-      // 300 one-byte chunks exceed the 255-frame ceiling.
-      expect(
-        () => buildFrames(
-          type: FrameType.message,
-          payload: Uint8List(300),
-          maxChunkSize: 1,
         ),
         throwsArgumentError,
       );

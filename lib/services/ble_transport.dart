@@ -8,7 +8,7 @@ import 'package:flutter/foundation.dart';
 import '../core/constants.dart';
 import '../core/ids.dart';
 import '../protocol/frame.dart';
-import '../protocol/wire.dart';
+import '../protocol/message_codec.dart';
 
 enum BleLogLevel { info, warning, error }
 
@@ -149,6 +149,14 @@ class BleTransport {
   Iterable<String> get connectedPeerIds => _allLinks()
       .where((link) => link.ready && !link.closed && link.peerId != null)
       .map((link) => link.peerId!);
+
+  /// Payload bytes accepted but not yet written to the radio. Controllers use
+  /// this to pace large blob transfers.
+  int get pendingBytes =>
+      _allLinks().fold(0, (total, link) => total + link.pendingBytes);
+
+  bool get hasReadyLinks =>
+      _allLinks().any((link) => link.ready && !link.closed);
 
   String get displayName => _selfName;
 
@@ -816,6 +824,7 @@ class BleTransport {
         break;
       case FrameType.message:
       case FrameType.ack:
+      case FrameType.blob:
         final peerId = link.peerId;
         if (!link.ready || peerId == null) return;
         _emit(
@@ -831,21 +840,15 @@ class BleTransport {
 
   void _handleHello(_Link link, Uint8List payload) {
     try {
-      final json = decodeJson(payload);
-      final version = json['v'];
-      final rawId = json['id'];
-      final rawName = json['name'];
-      if (version != protocolVersion || rawId is! String || !isPeerId(rawId)) {
-        throw const FormatException('Invalid HELLO');
-      }
-
+      final hello = MeshHello.decode(payload);
+      final rawId = hello.peerId;
       if (rawId == selfId) {
         _ignoredAddresses.add(link.address);
         _closeLink(link, 'loopback connection', notify: false);
         return;
       }
 
-      final rawTrimmed = rawName is String ? rawName.trim() : '';
+      final rawTrimmed = hello.name.trim();
       final name = rawTrimmed.isEmpty
           ? 'MGS ${shortPeerId(rawId)}'
           : rawTrimmed.substring(
@@ -887,12 +890,7 @@ class BleTransport {
 
   void _sendHello(_Link link) {
     try {
-      final payload = encodeJson(<String, dynamic>{
-        'v': protocolVersion,
-        'id': selfId,
-        'name': _selfName,
-        'os': Platform.operatingSystem,
-      });
+      final payload = MeshHello(peerId: selfId, name: _selfName).encode();
       _enqueue(link, FrameType.hello, payload);
     } catch (error) {
       _log('Could not send HELLO: $error', level: BleLogLevel.error);
@@ -915,6 +913,7 @@ class BleTransport {
       return;
     }
 
+    link.pendingBytes += payload.length;
     link.queue = link.queue
         .then((_) async {
           for (final frame in frames) {
@@ -952,6 +951,10 @@ class BleTransport {
         .catchError((Object error, StackTrace stackTrace) {
           _log('Send failed: $error', level: BleLogLevel.warning);
           _closeLink(link, 'write failed');
+        })
+        .whenComplete(() {
+          link.pendingBytes -= payload.length;
+          if (link.pendingBytes < 0) link.pendingBytes = 0;
         });
   }
 
@@ -1086,7 +1089,7 @@ class BleTransport {
 
   int _chunkSizeFor(int maxLength) {
     final usable = maxLength - frameHeaderLength;
-    if (usable <= 8) return 8;
+    if (usable < 1) return 1;
     return usable > maxChunkPayloadBytes ? maxChunkPayloadBytes : usable;
   }
 
@@ -1136,6 +1139,7 @@ class _Link {
   bool subscribed = false;
   bool closed = false;
   int maxChunkSize = 20;
+  int pendingBytes = 0;
   final DateTime createdAt = DateTime.now();
   DateTime lastActivity = DateTime.now();
   final FrameAssembler assembler = FrameAssembler();

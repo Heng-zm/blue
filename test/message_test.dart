@@ -16,6 +16,10 @@ Message build({
   int hops = 0,
   bool outgoing = true,
   MessageStatus status = MessageStatus.queued,
+  MessageKind kind = MessageKind.text,
+  MessageAttachment? attachment,
+  bool encrypted = false,
+  bool decryptionFailed = false,
 }) {
   return Message(
     id: id,
@@ -28,28 +32,82 @@ Message build({
     hops: hops,
     outgoing: outgoing,
     status: status,
+    kind: kind,
+    attachment: attachment,
+    encrypted: encrypted,
+    decryptionFailed: decryptionFailed,
   );
 }
 
+MessageAttachment attachment({String? path}) => MessageAttachment(
+  blobId: '0123456789abcdef',
+  transferId: 'deadbeef',
+  blobNonce: '000102030405060708090a0b',
+  name: 'photo.jpg',
+  mimeType: 'image/jpeg',
+  size: 1024,
+  cipherBytes: 1024 + 28,
+  chunkCount: 1,
+  digest: 'a' * 64,
+  durationMs: 0,
+  path: path,
+);
+
 void main() {
-  test('wire round-trip keeps the visible fields', () {
-    final message = build(text: '  hello there  ');
-    final wire = message.toWire();
+  test('storage round-trip keeps direction, status, and encryption', () {
+    final sent = build(
+      status: MessageStatus.delivered,
+      encrypted: true,
+      text: '  hello there  ',
+    );
+    final restored = Message.fromStorage(sent.toStorage());
+    expect(restored.outgoing, isTrue);
+    expect(restored.status, MessageStatus.delivered);
+    expect(restored.encrypted, isTrue);
+    expect(restored.text, 'hello there');
+    expect(restored.kind, MessageKind.text);
 
-    expect(wire['v'], protocolVersion);
-    expect(wire['kind'], 'text');
-    expect(wire.containsKey('dir'), isFalse);
-    expect(wire.containsKey('status'), isFalse);
+    final received = build(outgoing: false, status: MessageStatus.received);
+    final restoredIn = Message.fromStorage(received.toStorage());
+    expect(restoredIn.outgoing, isFalse);
+    expect(restoredIn.status, MessageStatus.received);
+  });
 
-    final decoded = Message.fromWire(wire);
-    expect(decoded.id, message.id);
-    expect(decoded.text, 'hello there');
-    expect(decoded.from, sender);
-    expect(decoded.fromName, 'Ada');
-    expect(decoded.to, broadcastRecipient);
-    expect(decoded.ttl, 3);
-    expect(decoded.outgoing, isFalse);
-    expect(decoded.status, MessageStatus.received);
+  test('storage round-trip keeps attachment descriptors', () {
+    final message = build(
+      kind: MessageKind.voice,
+      text: '',
+      attachment: attachment(path: '/tmp/voice.m4a'),
+    );
+    final restored = Message.fromStorage(message.toStorage());
+    expect(restored.kind, MessageKind.voice);
+    expect(restored.attachment, isNotNull);
+    expect(restored.attachment!.blobId, '0123456789abcdef');
+    expect(restored.attachment!.transferId, 'deadbeef');
+    expect(restored.attachment!.blobNonce, '000102030405060708090a0b');
+    expect(restored.attachment!.path, '/tmp/voice.m4a');
+    expect(restored.attachment!.available, isTrue);
+    expect(restored.isComplete, isTrue);
+  });
+
+  test('legacy v1 storage is migrated', () {
+    final legacy = <String, dynamic>{
+      'id': msgId,
+      'from': sender,
+      'name': 'Ada',
+      'to': broadcastRecipient,
+      'ts': 1700000000000,
+      'ttl': 3,
+      'hops': 1,
+      'text': 'old message',
+      'dir': 'in',
+      'status': 'received',
+    };
+    final restored = Message.fromStorage(legacy);
+    expect(restored.text, 'old message');
+    expect(restored.kind, MessageKind.text);
+    expect(restored.outgoing, isFalse);
+    expect(restored.encrypted, isFalse);
   });
 
   test('threads and previews are derived consistently', () {
@@ -61,65 +119,119 @@ void main() {
     final long = build(text: 'y' * 120);
     expect(long.preview.endsWith('…'), isTrue);
     expect(long.preview.length, 91);
+
+    expect(
+      build(kind: MessageKind.file, text: '', attachment: attachment()).preview,
+      'File · photo.jpg',
+    );
+    expect(
+      build(
+        kind: MessageKind.voice,
+        text: '',
+        attachment: attachment(),
+      ).preview,
+      contains('Voice message'),
+    );
   });
 
-  test('storage round-trip restores direction and status', () {
-    final sent = build(status: MessageStatus.delivered);
-    final restored = Message.fromStorage(sent.toStorage());
-    expect(restored.outgoing, isTrue);
-    expect(restored.status, MessageStatus.delivered);
-
-    final received = build(outgoing: false, status: MessageStatus.received);
-    final restoredIn = Message.fromStorage(received.toStorage());
-    expect(restoredIn.outgoing, isFalse);
-    expect(restoredIn.status, MessageStatus.received);
+  test('locked placeholders stay readable after storage', () {
+    final locked = build(
+      kind: MessageKind.file,
+      text: '',
+      encrypted: true,
+      decryptionFailed: true,
+      outgoing: false,
+      status: MessageStatus.received,
+    );
+    final restored = Message.fromStorage(locked.toStorage());
+    expect(restored.decryptionFailed, isTrue);
+    expect(restored.attachment, isNull);
+    expect(restored.isComplete, isTrue);
+    expect(restored.preview, 'Encrypted message');
   });
 
-  test('rejects invalid envelopes', () {
-    Map<String, dynamic> valid() => build().toWire();
-
-    expect(() => Message.fromWire({...valid(), 'v': 2}), throwsFormatException);
+  test('rejects invalid stored messages', () {
+    final valid = build().toStorage();
     expect(
-      () => Message.fromWire({...valid(), 'kind': 'image'}),
+      () => Message.fromStorage({...valid, 'v': protocolVersion + 1}),
       throwsFormatException,
     );
     expect(
-      () => Message.fromWire({...valid(), 'from': 'nope'}),
+      () => Message.fromStorage({...valid, 'kind': 'image'}),
       throwsFormatException,
     );
     expect(
-      () => Message.fromWire({...valid(), 'ttl': 0}),
+      () => Message.fromStorage({...valid, 'from': 'nope'}),
       throwsFormatException,
     );
     expect(
-      () => Message.fromWire({...valid(), 'ttl': maxTtl + 1}),
+      () => Message.fromStorage({...valid, 'ttl': 0}),
       throwsFormatException,
     );
     expect(
-      () => Message.fromWire({...valid(), 'hops': -1}),
+      () => Message.fromStorage({...valid, 'ttl': maxTtl + 1}),
       throwsFormatException,
     );
     expect(
-      () => Message.fromWire({...valid(), 'text': '   '}),
+      () => Message.fromStorage({...valid, 'hops': -1}),
+      throwsFormatException,
+    );
+    expect(
+      () => Message.fromStorage({...valid, 'text': '   '}),
       throwsFormatException,
     );
     expect(
       () =>
-          Message.fromWire({...valid(), 'text': 'x' * (maxMessageLength + 1)}),
+          Message.fromStorage({...valid, 'text': 'x' * (maxMessageLength + 1)}),
       throwsFormatException,
     );
     expect(
-      () => Message.fromWire({
-        ...valid(),
+      () => Message.fromStorage({
+        ...valid,
         'name': 'n' * (maxDisplayNameLength + 1),
       }),
       throwsFormatException,
     );
   });
 
+  test('rejects damaged attachment descriptors', () {
+    final message = build(
+      kind: MessageKind.file,
+      text: '',
+      attachment: attachment(),
+    );
+    final storage = message.toStorage();
+    final raw = Map<String, dynamic>.from(storage['attachment'] as Map);
+    expect(
+      () => Message.fromStorage({...storage, 'attachment': raw}),
+      returnsNormally,
+    );
+    expect(
+      () => Message.fromStorage({
+        ...storage,
+        'attachment': {...raw, 'blobId': 'nope'},
+      }),
+      throwsFormatException,
+    );
+    expect(
+      () => Message.fromStorage({
+        ...storage,
+        'attachment': {...raw, 'digest': 'nope'},
+      }),
+      throwsFormatException,
+    );
+    expect(
+      () => Message.fromStorage({...storage, 'attachment': null}),
+      throwsFormatException,
+    );
+  });
+
   test('accepts a maximum-length body', () {
     final text = 'z' * maxMessageLength;
-    final decoded = Message.fromWire({...build().toWire(), 'text': text});
-    expect(decoded.text.length, maxMessageLength);
+    final restored = Message.fromStorage({
+      ...build().toStorage(),
+      'text': text,
+    });
+    expect(restored.text.length, maxMessageLength);
   });
 }

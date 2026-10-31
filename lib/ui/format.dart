@@ -26,6 +26,25 @@ String logTimestamp(DateTime time) {
   return '$hour:$minute:$second';
 }
 
+/// Human-readable byte count. Keeps file bubbles compact.
+String formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) {
+    final value = bytes / 1024;
+    return '${value.toStringAsFixed(value < 10 ? 1 : 0)} KB';
+  }
+  final value = bytes / (1024 * 1024);
+  return '${value.toStringAsFixed(value < 10 ? 1 : 0)} MB';
+}
+
+/// `m:ss` for voice note durations.
+String durationLabel(int milliseconds) {
+  final totalSeconds = (milliseconds / 1000).round().clamp(0, 9999);
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
+}
+
 String signalLabel(int rssi) {
   if (rssi >= -55) return 'strong';
   if (rssi >= -70) return 'good';

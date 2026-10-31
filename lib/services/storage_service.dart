@@ -15,6 +15,7 @@ class StoredData {
     this.ttl = defaultTtl,
     this.relayEnabled = true,
     this.radioEnabled = true,
+    this.passphrase = '',
   });
 
   final String peerId;
@@ -23,6 +24,7 @@ class StoredData {
   int ttl;
   bool relayEnabled;
   bool radioEnabled;
+  String passphrase;
 }
 
 /// JSON-file persistence. Deliberately dependency-light and cross-platform;
@@ -102,6 +104,16 @@ class StorageService {
         ? (rawTtl < minTtl ? minTtl : (rawTtl > maxTtl ? maxTtl : rawTtl))
         : defaultTtl;
 
+    final rawPassphrase = json['passphrase'];
+    final passphrase = rawPassphrase is String
+        ? rawPassphrase.substring(
+            0,
+            rawPassphrase.length > maxPassphraseLength
+                ? maxPassphraseLength
+                : rawPassphrase.length,
+          )
+        : '';
+
     return StoredData(
       peerId: peerId,
       displayName: displayName,
@@ -113,6 +125,7 @@ class StorageService {
       radioEnabled: json['radioEnabled'] is bool
           ? json['radioEnabled'] as bool
           : true,
+      passphrase: passphrase,
     );
   }
 
@@ -121,9 +134,10 @@ class StorageService {
     await file.parent.create(recursive: true);
     final encoded = const JsonEncoder.withIndent('  ')
         .convert(<String, dynamic>{
-          'version': 1,
+          'version': storageVersion,
           'peerId': data.peerId,
           'displayName': data.displayName,
+          'passphrase': data.passphrase,
           'ttl': data.ttl,
           'relayEnabled': data.relayEnabled,
           'radioEnabled': data.radioEnabled,

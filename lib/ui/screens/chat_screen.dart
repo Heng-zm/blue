@@ -1,8 +1,13 @@
+import 'dart:async';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/constants.dart';
 import '../../state/app_controller.dart';
+import '../../services/voice_recorder.dart';
+import '../format.dart';
 import '../theme.dart';
 import '../widgets/chat_widgets.dart';
 import '../widgets/common.dart';
@@ -25,7 +30,15 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scroll = ScrollController();
   final TextEditingController _input = TextEditingController();
   final FocusNode _focus = FocusNode();
+  final VoiceRecorder _recorder = VoiceRecorder();
   int _lastCount = 0;
+
+  Timer? _recordTimer;
+  int _recordSeconds = 0;
+  bool _recording = false;
+  bool _startingRecording = false;
+  bool _finishingRecording = false;
+  bool _pickingFile = false;
 
   bool get _isBroadcast => widget.threadId == broadcastRecipient;
 
@@ -42,30 +55,161 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     widget.controller.leaveThread(widget.threadId);
+    _recordTimer?.cancel();
+    unawaited(_recorder.dispose());
     _scroll.dispose();
     _input.dispose();
     _focus.dispose();
     super.dispose();
   }
 
-  void _send() {
+  Future<void> _send() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
-    final sent = widget.controller.sendMessage(widget.threadId, text);
+    final sent = await widget.controller.sendMessage(widget.threadId, text);
+    if (!mounted) return;
     if (!sent) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Message could not be queued. Messages are limited to '
-            '$maxMessageLength characters.',
-          ),
-        ),
+      _showMessage(
+        'Message could not be queued. Messages are limited to '
+        '$maxMessageLength characters.',
       );
       return;
     }
     _input.clear();
     _focus.requestFocus();
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  Future<void> _pickFile() async {
+    if (_pickingFile || _recording) return;
+    setState(() => _pickingFile = true);
+    try {
+      final file = await FilePicker.pickFile(dialogTitle: 'Send a file');
+      if (file == null || !mounted) return;
+
+      final length = await file.length();
+      if (length != null && length > maxFileBytes) {
+        _showMessage(
+          'Files are limited to ${maxFileBytes ~/ (1024 * 1024)} MB.',
+        );
+        return;
+      }
+
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      if (bytes.isEmpty) {
+        _showMessage('The selected file is empty.');
+        return;
+      }
+      if (bytes.length > maxFileBytes) {
+        _showMessage(
+          'Files are limited to ${maxFileBytes ~/ (1024 * 1024)} MB.',
+        );
+        return;
+      }
+
+      final error = await widget.controller.sendFile(
+        widget.threadId,
+        name: file.name,
+        bytes: bytes,
+      );
+      if (error != null && mounted) _showMessage(error);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    } catch (error) {
+      if (mounted) _showMessage('Could not pick the file: $error');
+    } finally {
+      if (mounted) setState(() => _pickingFile = false);
+    }
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_startingRecording || _finishingRecording) return;
+    if (_recording) {
+      await _finishRecording(send: true);
+      return;
+    }
+
+    setState(() => _startingRecording = true);
+    try {
+      final started = await _recorder.start();
+      if (!mounted) {
+        if (started) await _recorder.cancel();
+        return;
+      }
+      if (!started) {
+        _showMessage(
+          'MGS needs microphone access to record a voice note. '
+          'Allow the microphone permission and try again.',
+        );
+        return;
+      }
+
+      _focus.unfocus();
+      setState(() {
+        _recording = true;
+        _recordSeconds = 0;
+      });
+      _recordTimer?.cancel();
+      _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        if (_recordSeconds >= maxVoiceSeconds - 1) {
+          setState(() => _recordSeconds = maxVoiceSeconds);
+          unawaited(_finishRecording(send: true));
+        } else {
+          setState(() => _recordSeconds++);
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _startingRecording = false);
+    }
+  }
+
+  Future<void> _finishRecording({required bool send}) async {
+    if (!_recording || _finishingRecording) return;
+    _finishingRecording = true;
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _recordSeconds = 0;
+      });
+    }
+
+    try {
+      if (!send) {
+        await _recorder.cancel();
+        return;
+      }
+
+      final voice = await _recorder.stop();
+      if (!mounted) return;
+      if (voice == null) {
+        _showMessage('Nothing was recorded.');
+        return;
+      }
+
+      final error = await widget.controller.sendVoice(
+        widget.threadId,
+        path: voice.path,
+        name: voice.name,
+        mimeType: voice.mimeType,
+        durationMs: voice.durationMs,
+      );
+      if (error != null && mounted) _showMessage(error);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    } catch (error) {
+      if (mounted) _showMessage('Could not send the voice note: $error');
+    } finally {
+      _finishingRecording = false;
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _scrollToBottom({bool animate = true}) {
@@ -149,6 +293,21 @@ class _ChatScreenState extends State<ChatScreen> {
             actions: [
               IconButton(
                 onPressed: () => _showInfo(context, title),
+                icon: Icon(
+                  controller.encryptionEnabled
+                      ? Icons.lock_outline
+                      : Icons.lock_open_outlined,
+                  color: controller.encryptionEnabled
+                      ? MgsColors.mint
+                      : MgsColors.amber,
+                  size: 19,
+                ),
+                tooltip: controller.encryptionEnabled
+                    ? 'Encrypted with the mesh passphrase'
+                    : 'No mesh passphrase',
+              ),
+              IconButton(
+                onPressed: () => _showInfo(context, title),
                 icon: const Icon(Icons.info_outline, size: 20),
                 tooltip: 'Conversation info',
               ),
@@ -158,6 +317,7 @@ class _ChatScreenState extends State<ChatScreen> {
           body: Column(
             children: [
               if (_isBroadcast) const _BroadcastBanner(),
+              if (!controller.encryptionEnabled) const _PlaintextBanner(),
               Expanded(
                 child: messages.isEmpty
                     ? _EmptyChat(isBroadcast: _isBroadcast, title: title)
@@ -185,14 +345,25 @@ class _ChatScreenState extends State<ChatScreen> {
                         },
                       ),
               ),
-              _Composer(
-                controller: _input,
-                focusNode: _focus,
-                hint: _isBroadcast
-                    ? 'Message everyone nearby'
-                    : 'Message $title',
-                onSend: _send,
-              ),
+              if (_recording)
+                _RecordingBar(
+                  seconds: _recordSeconds,
+                  busy: _finishingRecording,
+                  onCancel: () => _finishRecording(send: false),
+                  onSend: () => _finishRecording(send: true),
+                )
+              else
+                _Composer(
+                  controller: _input,
+                  focusNode: _focus,
+                  hint: _isBroadcast
+                      ? 'Message everyone nearby'
+                      : 'Message $title',
+                  busy: _pickingFile || _startingRecording,
+                  onSend: _send,
+                  onAttach: _pickFile,
+                  onRecord: _toggleRecording,
+                ),
             ],
           ),
         );
@@ -204,11 +375,14 @@ class _ChatScreenState extends State<ChatScreen> {
     final controller = widget.controller;
     final info = _isBroadcast
         ? 'The Nearby channel is public. Every MGS device in relay range '
-              'receives these messages.'
+              'receives these messages. Relays only forward the encrypted '
+              'bytes when a mesh passphrase is set; devices without the '
+              'passphrase cannot read them.'
         : 'Messages are flooded through the mesh and addressed to this peer. '
               'Delivery is confirmed when the recipient is directly connected. '
-              'Messages are not end-to-end encrypted yet: a device relaying '
-              'them can read the contents.';
+              'When a mesh passphrase is set, message bodies, files, and voice '
+              'notes are encrypted end to end (AES-256-GCM); relays cannot '
+              'read them.';
 
     await showDialog<void>(
       context: context,
@@ -227,6 +401,33 @@ class _ChatScreenState extends State<ChatScreen> {
                 fontSize: 12.5,
                 height: 1.5,
               ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Icon(
+                  controller.encryptionEnabled
+                      ? Icons.lock_outline
+                      : Icons.lock_open_outlined,
+                  size: 15,
+                  color: controller.encryptionEnabled
+                      ? MgsColors.mint
+                      : MgsColors.amber,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  controller.encryptionEnabled
+                      ? 'Mesh passphrase is set'
+                      : 'No mesh passphrase',
+                  style: TextStyle(
+                    color: controller.encryptionEnabled
+                        ? MgsColors.mint
+                        : MgsColors.amber,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
             ),
             if (!_isBroadcast) ...[
               const SizedBox(height: 16),
@@ -341,7 +542,33 @@ class _BroadcastBanner extends StatelessWidget {
           SizedBox(width: 7),
           Expanded(
             child: Text(
-              'Anyone running MGS nearby can read this channel.',
+              'Anyone running MGS nearby can receive this channel.',
+              style: TextStyle(color: MgsColors.muted, fontSize: 10.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlaintextBanner extends StatelessWidget {
+  const _PlaintextBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: MgsColors.amber.withValues(alpha: 0.08),
+      child: const Row(
+        children: [
+          Icon(Icons.lock_open_outlined, size: 13, color: MgsColors.amber),
+          SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              'No mesh passphrase: relays can read messages, files, and voice '
+              'notes. Set one in Settings → Mesh.',
               style: TextStyle(color: MgsColors.muted, fontSize: 10.5),
             ),
           ),
@@ -413,13 +640,19 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.hint,
+    required this.busy,
     required this.onSend,
+    required this.onAttach,
+    required this.onRecord,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final String hint;
-  final VoidCallback onSend;
+  final bool busy;
+  final Future<void> Function() onSend;
+  final VoidCallback onAttach;
+  final Future<void> Function() onRecord;
 
   @override
   Widget build(BuildContext context) {
@@ -428,12 +661,24 @@ class _Composer extends StatelessWidget {
         color: MgsColors.ink,
         border: Border(top: BorderSide(color: MgsColors.line)),
       ),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      padding: const EdgeInsets.fromLTRB(8, 10, 12, 10),
       child: SafeArea(
         top: false,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            IconButton(
+              onPressed: busy ? null : onAttach,
+              tooltip: 'Send a file',
+              icon: busy
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.attach_file, size: 21),
+            ),
+            const SizedBox(width: 2),
             Expanded(
               child: TextField(
                 controller: controller,
@@ -454,28 +699,100 @@ class _Composer extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             ValueListenableBuilder<TextEditingValue>(
               valueListenable: controller,
               builder: (context, value, _) {
-                final enabled = value.text.trim().isNotEmpty;
+                final hasText = value.text.trim().isNotEmpty;
                 return IconButton.filled(
-                  onPressed: enabled ? onSend : null,
-                  tooltip: 'Send',
+                  onPressed: hasText ? () => onSend() : () => onRecord(),
+                  tooltip: hasText ? 'Send' : 'Record a voice note',
                   style: IconButton.styleFrom(
-                    minimumSize: const Size(48, 48),
-                    backgroundColor: enabled
+                    minimumSize: const Size(46, 46),
+                    backgroundColor: hasText
                         ? MgsColors.lime
                         : MgsColors.panelHigh,
-                    foregroundColor: enabled
+                    foregroundColor: hasText
                         ? const Color(0xFF101A00)
-                        : MgsColors.muted,
+                        : MgsColors.text,
                     disabledBackgroundColor: MgsColors.panelHigh,
                     disabledForegroundColor: MgsColors.muted,
                   ),
-                  icon: const Icon(Icons.arrow_upward, size: 21),
+                  icon: Icon(
+                    hasText ? Icons.arrow_upward : Icons.mic_none,
+                    size: 21,
+                  ),
                 );
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RecordingBar extends StatelessWidget {
+  const _RecordingBar({
+    required this.seconds,
+    required this.busy,
+    required this.onCancel,
+    required this.onSend,
+  });
+
+  final int seconds;
+  final bool busy;
+  final VoidCallback onCancel;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: MgsColors.ink,
+        border: Border(top: BorderSide(color: MgsColors.line)),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: const BoxDecoration(
+                color: MgsColors.danger,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              'Recording  ${durationLabel(seconds * 1000)}',
+              style: const TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '/ ${durationLabel(maxVoiceSeconds * 1000)}',
+              style: const TextStyle(color: MgsColors.muted, fontSize: 11),
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: busy ? null : onCancel,
+              child: const Text('Cancel'),
+            ),
+            const SizedBox(width: 4),
+            IconButton.filled(
+              onPressed: busy ? null : onSend,
+              tooltip: 'Send voice note',
+              style: IconButton.styleFrom(
+                minimumSize: const Size(46, 46),
+                backgroundColor: MgsColors.lime,
+                foregroundColor: const Color(0xFF101A00),
+              ),
+              icon: const Icon(Icons.stop_rounded, size: 22),
             ),
           ],
         ),

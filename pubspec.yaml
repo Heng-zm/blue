@@ -1,7 +1,7 @@
 name: mgs
 description: "MGS — an offline, Bluetooth-only mesh messenger."
 publish_to: "none"
-version: 0.1.1+2
+version: 0.2.0+3
 
 environment:
   sdk: ^3.9.2
@@ -12,6 +12,13 @@ dependencies:
   bluetooth_low_energy: ^6.2.1
   characters: ^1.4.0
   path_provider: ^2.1.5
+  cryptography: ^2.9.0
+  crypto: ^3.0.8
+  file_picker: ^13.3.0
+  record: ^7.1.2
+  audioplayers: ^6.8.1
+  open_filex: ^5.0.0
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:

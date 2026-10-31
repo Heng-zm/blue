@@ -180,15 +180,20 @@ class BleTransport {
     _subscriptions.add(central.characteristicNotified.listen(_onNotified));
 
     _subscriptions.add(peripheral.stateChanged.listen(_onPeripheralState));
-    // The Windows backend does not implement peripheral connection events and
-    // throws when the stream is accessed. Subscribing unconditionally aborts
-    // the whole radio start before advertising or scanning can begin. Inbound
-    // disconnects are still detected through write/notify failures and the
-    // heartbeat timeout on Windows.
-    if (!Platform.isWindows) {
+    // The Windows and Darwin (macOS/iOS) backends do not implement peripheral
+    // connection events and throw UnsupportedError when the stream is accessed.
+    // Subscribing unconditionally aborts the whole radio start before
+    // advertising or scanning can begin. Inbound disconnects are still detected
+    // through write/notify failures and the heartbeat timeout on those platforms.
+    try {
       _subscriptions.add(
-        peripheral.connectionStateChanged.listen(_onInboundState),
+        peripheral.connectionStateChanged.listen(
+          _onInboundState,
+          onError: (_) {},
+        ),
       );
+    } catch (_) {
+      // Ignored if unsupported on the current platform.
     }
     _subscriptions.add(
       peripheral.characteristicWriteRequested.listen(
